@@ -135,44 +135,118 @@ SOFTWARE.
   }
 
   Player.fetchPkg = function(uri, nocache, love) {
-    return new Promise(function (resolve, reject) {
-      var data;
-      Player.readPkg(uri)
-        .then (function (cache) {
-          data = cache;
-        })
-        .catch (function(e) {
-          console.warn(e);
-        })
-        .finally(function () {
-          if (data && !nocache) {
-            resolve(data);
-            return;
+  return new Promise(function(resolve, reject) {
+
+    var data;
+
+    Player.readPkg(uri)
+      .then(function(cache) {
+        data = cache;
+      })
+      .catch(function(e) {
+        console.warn(e);
+      })
+      .finally(async function() {
+
+        if (data && !nocache) {
+          resolve(data);
+          return;
+        }
+
+        try {
+
+          // If requesting the game package, rebuild it from chunks
+          if (uri === 'game.love') {
+
+            const base =
+              'https://fastly.jsdelivr.net/gh/ashtonmkatz-ops/arco@main/';
+
+            const parts = [
+              base + 'game.love.partaa',
+              base + 'game.love.partab',
+              base + 'game.love.partac',
+              base + 'game.love.partad',
+              base + 'game.love.partae'
+            ];
+
+            console.log('Fetching split game.love...');
+
+            const chunks = await Promise.all(
+              parts.map(async function(url) {
+
+                const res = await fetch(url);
+
+                if (!res.ok) {
+                  throw new Error('Failed to fetch: ' + url);
+                }
+
+                return new Uint8Array(await res.arrayBuffer());
+
+              })
+            );
+
+            let totalLength = 0;
+
+            for (const chunk of chunks) {
+              totalLength += chunk.length;
+            }
+
+            data = new Uint8Array(totalLength);
+
+            let offset = 0;
+
+            for (const chunk of chunks) {
+              data.set(chunk, offset);
+              offset += chunk.length;
+            }
+
+          } else {
+
+            console.log('fetching:' + uri);
+
+            const res = await fetch(uri);
+
+            if (!res.ok) {
+              return reject('Could not fetch the love package');
+            }
+
+            data = new Uint8Array(await res.arrayBuffer());
+
           }
-          // Fetch the package remotely
-          console.log('fetching:'+uri);
-          fetch(uri)
-            .then(function (res) {
-              if (!res.ok)
-                return reject('Could not fetch the love package');
-              return res.arrayBuffer();
-            })
-            .then(function (data) {
-              data = new Uint8Array(data);
-              if (love) {
-                // Check if the header is a valid ZIP archive
-                var head = [80,75,3,4];
-                for (var i = 0; i < head.length; i++)
-                  if (data[i] != head[i])
-                    return reject('The fetched resource is not a valid love package');
+
+          // Validate .love (ZIP) header
+          if (love) {
+
+            const head = [80, 75, 3, 4];
+
+            for (let i = 0; i < head.length; i++) {
+
+              if (data[i] !== head[i]) {
+                return reject(
+                  'The fetched resource is not a valid love package'
+                );
               }
-              // Cache remote package for subsequent requests
-              Player.storePkg(uri, data);
-              resolve(data);
-            });
-        });
-    });
-  }
+
+            }
+
+          }
+
+          Player.storePkg(uri, data)
+            .catch(console.warn);
+
+          resolve(data);
+
+        } catch (err) {
+
+          console.error(err);
+          reject(err);
+
+        }
+
+      });
+
+  });
+};
 
   Player.fetchPkgs = function(uri, nocache) {
     return new Promise(function (resolve, reject) {
